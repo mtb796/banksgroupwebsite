@@ -1,0 +1,39 @@
+/* The Banks Group — shared base styles (design tokens, fonts, motion, helpers). */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #f2ede1; font-family: 'Jost', sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: #062e44; text-decoration: none; }
+a:hover { color: #c4a56b; }
+input, select, textarea, button { font-family: 'Jost', sans-serif; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: #c4a56b !important; }
+::placeholder { color: #93a0aa; }
+input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+@keyframes lineGrow { from { width: 0; opacity: 0; } to { width: 80px; opacity: 1; } }
+@keyframes liftUp { to { transform: translateY(-101%); } }
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes heroZoom { from { transform: scale(1); } to { transform: scale(1.14); } }
+@keyframes goldDrift { 0% { transform: translate(-8%, -4%); opacity: .5; } 50% { transform: translate(6%, 5%); opacity: .85; } 100% { transform: translate(-8%, -4%); opacity: .5; } }
+
+/* scroll reveal */
+.reveal { opacity: 0; transform: translateY(26px); transition: opacity .9s cubic-bezier(.22,1,.36,1), transform .9s cubic-bezier(.22,1,.36,1); }
+.reveal.in { opacity: 1; transform: none; }
+
+/* hover helpers (ported from the design's style-hover) */
+.h-goldfill:hover { background: #d4b87e !important; color: #062e44 !important; }
+.h-goldout:hover { border-color: #c4a56b !important; color: #c4a56b !important; }
+.h-navyfill:hover { background: #0a3a55 !important; }
+.h-gold:hover { color: #c4a56b !important; }
+.h-golddim:hover { color: #a3854f !important; }
+
+@media (max-width: 940px) {
+  .rsp-hide { display: none !important; }
+  .rsp-2col { grid-template-columns: 1fr !important; gap: 44px !important; }
+  .rsp-wrap { flex-wrap: wrap !important; }
+}
+@media (max-width: 640px) {
+  .rsp-form2 { grid-template-columns: 1fr !important; }
+}
