@@ -42,7 +42,7 @@
     return { kind: "number", key: key, label: label, prefix: prefix || "", suffix: suffix || "", step: step || 1 };
   }
   function toggle(key, label) { return { kind: "toggle", key: key, label: label }; }
-  function choice(key, label, options) { return { kind: "choice", key: key, label: label, options: options }; }
+  function dropdown(key, label, options) { return { kind: "select", key: key, label: label, options: options }; }
 
   /* ------------------------------- CALCULATORS ------------------------------- */
   var CALCS = {};
@@ -195,9 +195,10 @@
     compute: function (s) {
       var curPI = pmt(s.balance, s.curRate, s.yearsLeft);
       var base = s.balance + s.cashOut;
-      var pointsCost = base * s.points / 100;
+      // Points are a % of the final loan, so rolling them in grows the loan they're charged on.
+      var newLoan = s.roll ? (base + s.closing) / (1 - s.points / 100) : base;
+      var pointsCost = newLoan * s.points / 100;
       var costs = s.closing + pointsCost;
-      var newLoan = base + (s.roll ? costs : 0);
       var newPI = pmt(newLoan, s.newRate, s.newTerm);
       var savings = curPI - newPI;
       var breakeven = savings > 0 ? costs / savings : NaN;
@@ -238,214 +239,172 @@
     }
   };
 
-  // ---------- Affordability (with discount points) ----------
-  function affordPrice(s, rate) {
-    var income = s.income / 12;
-    var budget = Math.min(income * s.frontDti / 100, income * s.backDti / 100 - s.debts);
-    var payment = function (price) {
-      var loan = Math.max(0, price - s.down);
-      var mi = price > 0 && loan / price > 0.8 ? loan * s.pmiRate / 100 / 12 : 0;
-      return pmt(loan, rate, s.term) + price * s.taxRate / 100 / 12 + s.insurance / 12 + s.hoa + mi;
-    };
-    var price = solveMax(payment, budget, s.down, s.down + 2e7);
-    return { price: price, budget: budget, payment: payment };
+  // ---------- Home-loan programs shared by Affordability & Max Mortgage ----------
+  // Buyers pick a loan type; the program's rules (down payment options,
+  // mortgage insurance, funding fee, DTI limits, loan limit) are built in.
+  var LOAN_LIMIT = 1249125;          // 2026 one-unit conforming & FHA limit across the DC metro
+  var TAX_RATE = 1.0;                // est. property tax, % of price per year (DMV average)
+  var INS_RATE = 0.35;               // est. homeowners insurance, % of price per year
+  var CLOSING_PCT = 2.5;             // est. buyer closing costs, % of price
+  var RATE_DROP_PER_POINT = 0.25;    // common rule of thumb; lenders price daily
+  var COMFORT = { front: 28, back: 36 }; // classic "comfortable" budget ratios
+
+  var PROGRAMS = {
+    conv: { name: "Conventional", maxFront: Infinity, maxBack: 45, limit: LOAN_LIMIT,
+      downs: [[3, "3% (first-time buyers)"], [5, "5%"], [10, "10%"], [15, "15%"], [20, "20% (no PMI)"], [25, "25%"]] },
+    fha: { name: "FHA", maxFront: 31, maxBack: 43, limit: LOAN_LIMIT,
+      downs: [[3.5, "3.5% (minimum)"], [5, "5%"], [10, "10%"], [20, "20%"]] },
+    va: { name: "VA", maxFront: Infinity, maxBack: 41, limit: Infinity,
+      downs: [[0, "0% (no down payment)"], [5, "5%"], [10, "10%"]] }
+  };
+  var TYPE_OPTIONS = [["conv", "Conventional"], ["fha", "FHA"], ["va", "VA"]];
+  var TERM_OPTIONS = [[30, "30 years"], [20, "20 years"], [15, "15 years"]];
+  var POINT_OPTIONS = [[0, "None"], [0.5, "0.5 point"], [1, "1 point"], [1.5, "1.5 points"], [2, "2 points"]];
+
+  // Conventional PMI, annual % of the loan, by down payment (typical for good credit).
+  function convPmi(down) { return down >= 20 ? 0 : down >= 15 ? 0.25 : down >= 10 ? 0.4 : down >= 5 ? 0.55 : 0.7; }
+  // FHA annual MIP (30-year terms; 15-year and shorter loans price lower).
+  function fhaMip(base, down, term) {
+    if (term <= 15) return down >= 10 ? 0.15 : base > 726200 ? 0.4 : 0.15;
+    return base > 726200 ? (down >= 5 ? 0.7 : 0.75) : (down >= 5 ? 0.5 : 0.55);
   }
+  // VA funding fee, % of the loan, by down payment and first vs. later use.
+  function vaFee(down, subsequent) { return down >= 10 ? 1.25 : down >= 5 ? 1.5 : (subsequent ? 3.3 : 2.15); }
+
+  // Monthly cost of owning at a given price under a program.
+  function homeCost(s, price, down, rate) {
+    var base = price * (1 - down / 100), upfront = 0, annualMi = 0;
+    if (s.type === "conv") annualMi = convPmi(down);
+    if (s.type === "fha") { upfront = 1.75; annualMi = fhaMip(base, down, s.term); }
+    if (s.type === "va") upfront = s.vaExempt ? 0 : vaFee(down, s.vaSubsequent);
+    var loan = base * (1 + upfront / 100);
+    var pi = pmt(loan, rate, s.term), mi = base * annualMi / 100 / 12;
+    var taxIns = price * (TAX_RATE + INS_RATE) / 100 / 12;
+    return { base: base, loan: loan, fee: loan - base, upfront: upfront, pi: pi, mi: mi, taxIns: taxIns, total: pi + mi + taxIns + s.hoa };
+  }
+
+  // Highest price whose payment fits the DTI limits, capped by the loan limit.
+  function qualify(s, down, rate, front, back) {
+    var p = PROGRAMS[s.type], monthly = s.income / 12;
+    var budget = Math.min(monthly * front / 100, monthly * back / 100 - s.debts);
+    var incomePrice = solveMax(function (x) { return homeCost(s, x, down, rate).total; }, budget, 0, 2e7);
+    var ok = isFinite(incomePrice) && incomePrice > 1000;
+    var capped = ok && incomePrice * (1 - down / 100) > p.limit;
+    var price = !ok ? 0 : capped ? p.limit / (1 - down / 100) : incomePrice;
+    return { ok: ok, capped: capped, price: price, incomePrice: incomePrice, budget: budget, cost: homeCost(s, price, down, rate) };
+  }
+
+  // Switching loan type starts from that program's usual down payment.
+  var DEFAULT_DOWN = { conv: 5, fha: 3.5, va: 0 };
+  function fixDown(s) {
+    if (s.lastType !== s.type) { s.down = DEFAULT_DOWN[s.type]; s.lastType = s.type; }
+  }
+
+  function loanQuestions(s, maxMode) {
+    if (s.type === "va") return [ toggle("vaSubsequent", "Used a VA loan before?"), toggle("vaExempt", "VA disability? (no funding fee)") ];
+    if (s.type === "conv" && maxMode) return [ toggle("firstTime", "First-time homebuyer? (allows 3% down)") ];
+    return [];
+  }
+
+  function feeRow(s, c) {
+    if (s.type === "va") return ["VA funding fee (financed)", c.upfront ? fmt$(c.fee) : "Waived"];
+    if (s.type === "fha") return ["Upfront MIP (1.75%, financed)", fmt$(c.fee)];
+    return null;
+  }
+  function miLabel(s) { return s.type === "fha" ? "Monthly FHA insurance (MIP)" : s.type === "va" ? "Mortgage insurance (none on VA)" : "Mortgage insurance (PMI)"; }
+
+  var ASSUMPTIONS = "Estimates property taxes at 1% and homeowners insurance at 0.35% of the price per year, and uses the 2026 DMV loan limit of $1,249,125 (St. Mary's County is lower).";
+
+  // ---------- Affordability (with discount points) ----------
   CALCS.affordability = {
-    state: { income: 165000, debts: 650, down: 60000, rate: 6.5, term: 30, points: 1, perPoint: 0.25, taxRate: 1.0, insurance: 1500, hoa: 0, pmiRate: 0.5, frontDti: 33, backDti: 43, closingPct: 2.5 },
+    state: { type: "conv", lastType: "conv", income: 165000, debts: 650, down: 5, rate: 6.5, term: 30, points: 0, hoa: 0, vaSubsequent: false, vaExempt: false },
     compute: function (s) {
-      var effRate = Math.max(0, s.rate - s.points * s.perPoint);
-      var withPts = affordPrice(s, effRate);
-      var noPts = affordPrice(s, s.rate);
-      var price = withPts.price;
-      var ok = isFinite(price);
-      var loan = ok ? Math.max(0, price - s.down) : 0;
-      var pi = pmt(loan, effRate, s.term);
-      var taxes = ok ? price * s.taxRate / 100 / 12 : 0;
-      var mi = ok && price > 0 && loan / price > 0.8 ? loan * s.pmiRate / 100 / 12 : 0;
-      var total = pi + taxes + s.insurance / 12 + s.hoa + mi;
-      var pointsCost = loan * s.points / 100;
-      var ptSavings = pmt(loan, s.rate, s.term) - pi;
-      var breakeven = ptSavings > 0 ? pointsCost / ptSavings : NaN;
-      var cashToClose = s.down + pointsCost + (ok ? price * s.closingPct / 100 : 0);
-      var backUsed = s.income > 0 ? (total + s.debts) / (s.income / 12) : NaN;
+      fixDown(s);
+      var p = PROGRAMS[s.type];
+      var effRate = Math.max(0, s.rate - s.points * RATE_DROP_PER_POINT);
+      var q = qualify(s, s.down, effRate, COMFORT.front, COMFORT.back);
+      var noPts = qualify(s, s.down, s.rate, COMFORT.front, COMFORT.back);
+      var c = q.cost;
+      var pointsCost = c.loan * s.points / 100;
+      var ptSavings = pmt(c.loan, s.rate, s.term) - c.pi;
+      var outputs = [
+        ["Loan amount", fmt$(c.loan)],
+        ["Down payment (" + s.down + "%)", fmt$(q.price * s.down / 100)],
+        ["Principal & interest", fmt$(c.pi)],
+        [miLabel(s), fmt$(c.mi)],
+        ["Est. taxes & insurance", fmt$(c.taxIns)],
+        ["Total monthly payment", fmt$(c.total)]
+      ];
+      var fee = feeRow(s, c); if (fee) outputs.splice(1, 0, fee);
+      if (s.hoa > 0) outputs.splice(outputs.length - 1, 0, ["HOA / condo fee", fmt$(s.hoa)]);
+      if (s.points > 0) outputs.push(
+        ["Rate after points", fmtRate(effRate)],
+        ["Cost of points", fmt$(pointsCost)],
+        ["Points pay for themselves in", fmtMo(ptSavings > 0 ? pointsCost / ptSavings : NaN)],
+        ["Extra buying power from points", noPts.ok ? fmt$(q.price - noPts.price) : "—"]
+      );
+      outputs.push(["Est. cash to close", fmt$(q.price * s.down / 100 + pointsCost + q.price * CLOSING_PCT / 100)]);
       var verdict, color;
-      if (!ok) { verdict = "DEBTS EXCEED THE DTI LIMIT — PAY DOWN OR ADJUST"; color = BAD; }
-      else if (s.points <= 0) { verdict = "NO POINTS — ADD SOME TO SEE THE TRADE-OFF"; color = WARN; }
-      else if (breakeven <= 60) { verdict = "POINTS PAY BACK IN " + Math.ceil(breakeven) + " MONTHS"; color = GOOD; }
-      else { verdict = "POINTS TAKE " + Math.ceil(breakeven) + "+ MONTHS TO PAY BACK"; color = WARN; }
+      if (!q.ok) { verdict = "MONTHLY DEBTS ARE TOO HIGH FOR THIS INCOME"; color = BAD; }
+      else if (q.capped && s.type === "conv") { verdict = "ABOVE THE CONFORMING LIMIT — JUMBO TERRITORY"; color = WARN; }
+      else if (q.capped) { verdict = "CAPPED BY THE FHA LOAN LIMIT"; color = WARN; }
+      else { verdict = "PAYMENT ≈ 28% OF INCOME · DEBTS ≤ 36%"; color = GOOD; }
       return {
         groups: [
-          { title: "INCOME & DEBTS", fields: [ num("income", "Gross household income", "$", "/yr", 1000), num("debts", "Monthly debt payments", "$", "/mo", 25), num("frontDti", "Max housing ratio", "", "%", 0.5), num("backDti", "Max total DTI", "", "%", 0.5) ] },
-          { title: "LOAN & DISCOUNT POINTS", fields: [ num("down", "Down payment", "$", "", 1000), num("rate", "Interest rate (no points)", "", "%", 0.125), num("term", "Loan term", "", "yrs"), num("points", "Discount points bought", "", "pts", 0.25), num("perPoint", "Rate drop per point", "", "%", 0.05) ] },
-          { title: "HOUSING COSTS", fields: [ num("taxRate", "Property tax rate", "", "%/yr", 0.05), num("insurance", "Homeowners insurance", "$", "/yr", 50), num("hoa", "HOA / condo fee", "$", "/mo", 10), num("pmiRate", "PMI (if < 20% down)", "", "%/yr", 0.05), num("closingPct", "Other closing costs", "", "%", 0.25) ] }
+          { title: "YOUR LOAN", fields: [ dropdown("type", "Loan type", TYPE_OPTIONS), dropdown("down", "Down payment", p.downs), num("rate", "Interest rate", "", "%", 0.125), dropdown("term", "Loan term", TERM_OPTIONS) ].concat(loanQuestions(s, false)) },
+          { title: "YOUR FINANCES", fields: [ num("income", "Household income (before taxes)", "$", "/yr", 1000), num("debts", "Monthly debt payments", "$", "/mo", 25), num("hoa", "HOA / condo fee (if any)", "$", "/mo", 10) ] },
+          { title: "DISCOUNT POINTS", fields: [ dropdown("points", "Buy down your rate?", POINT_OPTIONS) ] }
         ],
-        heroLabel: "HOME PRICE YOU CAN AFFORD", heroValue: ok ? fmt$(price) : "—",
-        verdict: verdict, verdictColor: color,
-        outputs: [
-          ["Loan amount", fmt$(loan)],
-          ["Rate after points", fmtRate(effRate)],
-          ["Principal & interest", fmt$(pi)],
-          ["Taxes + insurance + HOA", fmt$(taxes + s.insurance / 12 + s.hoa)],
-          ["Mortgage insurance", fmt$(mi)],
-          ["Total monthly payment", fmt$(total)],
-          ["Total DTI used", fmtPct(backUsed)],
-          ["Cost of points", fmt$(pointsCost)],
-          ["Monthly savings from points", fmt$(ptSavings)],
-          ["Points break-even", fmtMo(breakeven)],
-          ["Buying power added by points", isFinite(noPts.price) && ok ? fmt$(price - noPts.price) : "—"],
-          ["Estimated cash to close", fmt$(cashToClose)]
-        ],
-        note: "Rate drop per point varies by lender and by day — 0.25% per point is a common rule of thumb. Get it in writing on a Loan Estimate."
+        heroLabel: "HOME PRICE YOU CAN COMFORTABLY AFFORD", heroValue: q.ok ? fmt$(q.price) : "—",
+        verdict: verdict, verdictColor: color, outputs: outputs,
+        note: "Uses the classic comfortable budget: housing ≈ 28% of gross income, all debts ≤ 36%. Each point lowers the rate about 0.25%. " + ASSUMPTIONS
       };
     }
   };
 
   // ---------- Maximum mortgage by loan type ----------
-  var LOAN_TYPES = [["conv", "CONVENTIONAL"], ["fha", "FHA"], ["va", "VA"], ["hard", "HARD MONEY"], ["construction", "NEW CONSTRUCTION"]];
-  // VA funding fee, first use / subsequent use, by down payment tier.
-  function vaFee(downPct, subsequent) {
-    if (downPct >= 10) return 1.25;
-    if (downPct >= 5) return 1.5;
-    return subsequent ? 3.3 : 2.15;
-  }
   CALCS.maxloan = {
-    state: {
-      type: "conv",
-      income: 165000, debts: 650, rate: 6.5, term: 30, taxRate: 1.0, insurance: 1500, hoa: 0,
-      convDown: 5, convDti: 45, convPmi: 0.5, convLimit: 1249125,
-      fhaDown: 3.5, fhaFront: 31, fhaBack: 43, fhaMip: 0.55, fhaUfmip: 1.75, fhaLimit: 1249125,
-      vaDown: 0, vaDti: 41, vaSubsequent: false, vaExempt: false,
-      hmPurchase: 400000, hmRehab: 90000, hmArv: 660000, hmPurchPct: 90, hmRehabPct: 100, hmArvPct: 70, hmRate: 11, hmPoints: 2,
-      ncLand: 250000, ncBuild: 520000, ncValue: 1050000, ncLtc: 85, ncLtv: 75, ncOwnLand: false, ncRate: 9.5, ncPoints: 1.5
-    },
+    state: { type: "conv", income: 165000, debts: 650, rate: 6.5, term: 30, hoa: 0, firstTime: false, vaSubsequent: false, vaExempt: false },
     compute: function (s) {
-      var typeField = choice("type", "Loan type", LOAN_TYPES);
-      if (s.type === "hard" || s.type === "construction") return s.type === "hard" ? hardMoney(s, typeField) : construction(s, typeField);
-      return residential(s, typeField);
+      var p = PROGRAMS[s.type];
+      var down = s.type === "va" ? 0 : s.type === "fha" ? 3.5 : (s.firstTime ? 3 : 5);
+      var q = qualify(s, down, s.rate, p.maxFront, p.maxBack);
+      var c = q.cost;
+      var dtiText = (isFinite(p.maxFront) ? p.maxFront + "% housing / " : "") + p.maxBack + "% total debts";
+      var outputs = [
+        ["Maximum purchase price", q.ok ? fmt$(q.price) : "—"],
+        ["Minimum down payment (" + down + "%)", fmt$(q.price * down / 100)],
+        ["Principal & interest", fmt$(c.pi)],
+        [miLabel(s), fmt$(c.mi)],
+        ["Est. taxes & insurance", fmt$(c.taxIns)],
+        ["Total monthly payment", fmt$(c.total)],
+        [p.name + " debt-to-income limit", dtiText],
+        ["Loan limit", isFinite(p.limit) ? fmt$(p.limit) : "None with full entitlement"]
+      ];
+      var fee = feeRow(s, c); if (fee) outputs.splice(2, 0, fee);
+      if (s.hoa > 0) outputs.splice(outputs.indexOf(outputs.filter(function (o) { return o[0] === "Total monthly payment"; })[0]), 0, ["HOA / condo fee", fmt$(s.hoa)]);
+      if (q.capped && s.type === "conv") outputs.push(["Your income supports (jumbo)", fmt$(q.incomePrice)]);
+      var verdict, color;
+      if (!q.ok) { verdict = "MONTHLY DEBTS EXCEED THE " + p.name.toUpperCase() + " LIMIT"; color = BAD; }
+      else if (q.capped && s.type === "conv") { verdict = "INCOME SUPPORTS MORE — ABOVE THIS IS JUMBO"; color = WARN; }
+      else if (q.capped) { verdict = "CAPPED BY THE FHA LOAN LIMIT"; color = WARN; }
+      else { verdict = "MAXIMUM " + p.name.toUpperCase() + " APPROVAL ESTIMATE"; color = GOOD; }
+      var notes = {
+        conv: "Conventional loans allow up to 45% of income for all debts, and automated approvals can go higher. PMI drops off once you reach 22% equity.",
+        fha: "FHA allows 31% of income for housing and 43% for all debts, and automated approvals often go higher. FHA insurance stays for the life of the loan with under 10% down.",
+        va: "VA uses 41% of income as a guideline and also checks your residual income, the money left each month after all bills. There's no down payment and no monthly mortgage insurance."
+      };
+      return {
+        groups: [
+          { title: "YOUR LOAN", fields: [ dropdown("type", "Loan type", TYPE_OPTIONS), num("rate", "Interest rate", "", "%", 0.125), dropdown("term", "Loan term", TERM_OPTIONS) ].concat(loanQuestions(s, true)) },
+          { title: "YOUR FINANCES", fields: [ num("income", "Household income (before taxes)", "$", "/yr", 1000), num("debts", "Monthly debt payments", "$", "/mo", 25), num("hoa", "HOA / condo fee (if any)", "$", "/mo", 10) ] }
+        ],
+        heroLabel: "MAXIMUM " + p.name.toUpperCase() + " LOAN", heroValue: q.ok ? fmt$(c.loan) : "—",
+        verdict: verdict, verdictColor: color, outputs: outputs,
+        note: notes[s.type] + " " + ASSUMPTIONS
+      };
     }
   };
-
-  function residential(s, typeField) {
-    var t = s.type, down, front, back, upfront, annualMi, limit, fields;
-    if (t === "conv") {
-      down = s.convDown; front = Infinity; back = s.convDti; upfront = 0; limit = s.convLimit;
-      annualMi = down < 20 ? s.convPmi : 0;
-      fields = [ num("convDown", "Down payment", "", "%", 0.5), num("convDti", "Max total DTI", "", "%", 0.5), num("convPmi", "PMI (if < 20% down)", "", "%/yr", 0.05), num("convLimit", "Conforming limit (county)", "$", "", 1000) ];
-    } else if (t === "fha") {
-      down = Math.max(3.5, s.fhaDown); front = s.fhaFront; back = s.fhaBack; upfront = s.fhaUfmip; annualMi = s.fhaMip; limit = s.fhaLimit;
-      fields = [ num("fhaDown", "Down payment (3.5% min)", "", "%", 0.5), num("fhaFront", "Max housing ratio", "", "%", 0.5), num("fhaBack", "Max total DTI", "", "%", 0.5), num("fhaUfmip", "Upfront MIP (financed)", "", "%", 0.05), num("fhaMip", "Annual MIP", "", "%/yr", 0.05), num("fhaLimit", "FHA limit (county)", "$", "", 1000) ];
-    } else {
-      down = s.vaDown; front = Infinity; back = s.vaDti; annualMi = 0; limit = Infinity;
-      upfront = s.vaExempt ? 0 : vaFee(down, s.vaSubsequent);
-      fields = [ num("vaDown", "Down payment", "", "%", 0.5), num("vaDti", "Target total DTI", "", "%", 0.5), toggle("vaSubsequent", "Used VA entitlement before?"), toggle("vaExempt", "Funding-fee exempt (disability)?") ];
-    }
-    var d = down / 100;
-    var income = s.income / 12;
-    var budget = Math.min(income * front / 100, income * back / 100 - s.debts);
-    var payment = function (price) {
-      var base = price * (1 - d);
-      return pmt(base * (1 + upfront / 100), s.rate, s.term) + base * annualMi / 100 / 12 + price * s.taxRate / 100 / 12 + s.insurance / 12 + s.hoa;
-    };
-    var incomePrice = solveMax(payment, budget, 0, 2e7);
-    var ok = isFinite(incomePrice) && incomePrice > 0;
-    var capped = ok && d < 1 && incomePrice * (1 - d) > limit;
-    var price = capped ? limit / (1 - d) : incomePrice;
-    var base = ok ? price * (1 - d) : 0;
-    var total = base * (1 + upfront / 100);
-    var pay = ok ? payment(price) : 0;
-    var labels = { conv: "CONVENTIONAL", fha: "FHA", va: "VA" };
-    var verdict, color;
-    if (!ok) { verdict = "DEBTS EXCEED THE DTI LIMIT"; color = BAD; }
-    else if (capped && t === "conv") { verdict = "INCOME SUPPORTS MORE — ABOVE THIS IS JUMBO"; color = WARN; }
-    else if (capped) { verdict = "CAPPED BY THE COUNTY FHA LIMIT"; color = WARN; }
-    else { verdict = "INCOME-QUALIFIED " + labels[t] + " MAXIMUM"; color = GOOD; }
-    var outputs = [
-      ["Maximum purchase price", ok ? fmt$(price) : "—"],
-      ["Down payment (" + down + "%)", fmt$(ok ? price * d : 0)]
-    ];
-    if (upfront > 0) outputs.push([t === "va" ? "Funding fee (" + upfront + "%, financed)" : "Upfront MIP (" + upfront + "%, financed)", fmt$(total - base)]);
-    outputs.push(
-      ["Principal & interest", fmt$(pmt(total, s.rate, s.term))],
-      [t === "fha" ? "Monthly MIP" : "Mortgage insurance", fmt$(base * annualMi / 100 / 12)],
-      ["Taxes + insurance + HOA", fmt$(ok ? price * s.taxRate / 100 / 12 + s.insurance / 12 + s.hoa : 0)],
-      ["Total monthly payment", fmt$(pay)],
-      ["Max payment your income allows", fmt$(budget)]
-    );
-    if (capped && t === "conv") outputs.push(["Income-supported price (jumbo)", fmt$(incomePrice)]);
-    if (t === "va") outputs.push(["Loan limit (full entitlement)", "None"]);
-    var notes = {
-      conv: "Conventional allows as little as 3% down for first-time buyers; PMI drops off at 78% of the original value.",
-      fha: "Annual MIP is 0.55% up to a $726,200 base loan (0.75% above) and stays for the life of the loan with under 10% down. Automated approvals often go well above 43% DTI.",
-      va: "VA lenders also check residual income — money left each month after all obligations — which can matter more than DTI."
-    };
-    return {
-      groups: [
-        { title: "LOAN TYPE", fields: [ typeField ] },
-        { title: "INCOME & DEBTS", fields: [ num("income", "Gross household income", "$", "/yr", 1000), num("debts", "Monthly debt payments", "$", "/mo", 25), num("rate", "Interest rate", "", "%", 0.125), num("term", "Loan term", "", "yrs") ] },
-        { title: labels[t] + " GUIDELINES", fields: fields },
-        { title: "HOUSING COSTS", fields: [ num("taxRate", "Property tax rate", "", "%/yr", 0.05), num("insurance", "Homeowners insurance", "$", "/yr", 50), num("hoa", "HOA / condo fee", "$", "/mo", 10) ] }
-      ],
-      heroLabel: "MAXIMUM " + labels[t] + " LOAN", heroValue: ok ? fmt$(total) : "—",
-      verdict: verdict, verdictColor: color, outputs: outputs, note: notes[t]
-    };
-  }
-
-  function hardMoney(s, typeField) {
-    var byCost = s.hmPurchase * s.hmPurchPct / 100 + s.hmRehab * s.hmRehabPct / 100;
-    var byArv = s.hmArv * s.hmArvPct / 100;
-    var loan = Math.max(0, Math.min(byCost, byArv));
-    var project = s.hmPurchase + s.hmRehab;
-    var points = loan * s.hmPoints / 100;
-    var arvLimited = byArv < byCost;
-    return {
-      groups: [
-        { title: "LOAN TYPE", fields: [ typeField ] },
-        { title: "THE DEAL", fields: [ num("hmPurchase", "Purchase price", "$", "", 1000), num("hmRehab", "Rehab budget", "$", "", 1000), num("hmArv", "After-repair value (ARV)", "$", "", 5000) ] },
-        { title: "LENDER TERMS", fields: [ num("hmPurchPct", "% of purchase funded", "", "%", 0.5), num("hmRehabPct", "% of rehab funded", "", "%", 0.5), num("hmArvPct", "Max loan-to-ARV", "", "%", 0.5), num("hmRate", "Interest rate", "", "%", 0.125), num("hmPoints", "Lender points", "", "pts", 0.25) ] }
-      ],
-      heroLabel: "MAXIMUM HARD MONEY LOAN", heroValue: fmt$(loan),
-      verdict: arvLimited ? "CAPPED BY ARV — EXPECT MORE CASH IN" : "FULLY FUNDED TO LENDER'S LTC",
-      verdictColor: arvLimited ? WARN : GOOD,
-      outputs: [
-        ["Loan by cost (purchase + rehab)", fmt$(byCost)],
-        ["Loan cap by ARV (" + s.hmArvPct + "%)", fmt$(byArv)],
-        ["Loan-to-cost", fmtPct(project > 0 ? loan / project : NaN)],
-        ["Cash for purchase + rehab", fmt$(project - loan)],
-        ["Points at closing", fmt$(points)],
-        ["Interest-only payment (fully drawn)", fmt$(loan * s.hmRate / 100 / 12)]
-      ],
-      note: "Hard money is asset-based: the deal qualifies more than your income does. Rehab funds are usually reimbursed in draws after inspection."
-    };
-  }
-
-  function construction(s, typeField) {
-    var cost = s.ncLand + s.ncBuild;
-    var byCost = cost * s.ncLtc / 100;
-    var byValue = s.ncValue * s.ncLtv / 100;
-    var loan = Math.max(0, Math.min(byCost, byValue));
-    var cashIn = Math.max(0, cost - loan - (s.ncOwnLand ? s.ncLand : 0));
-    var valueLimited = byValue < byCost;
-    return {
-      groups: [
-        { title: "LOAN TYPE", fields: [ typeField ] },
-        { title: "THE PROJECT", fields: [ num("ncLand", "Land value / cost", "$", "", 1000), num("ncBuild", "Total build budget", "$", "", 1000), num("ncValue", "As-completed value", "$", "", 5000), toggle("ncOwnLand", "Already own the land?") ] },
-        { title: "LENDER TERMS", fields: [ num("ncLtc", "Max loan-to-cost", "", "%", 0.5), num("ncLtv", "Max loan-to-completed-value", "", "%", 0.5), num("ncRate", "Interest rate", "", "%", 0.125), num("ncPoints", "Lender points", "", "pts", 0.25) ] }
-      ],
-      heroLabel: "MAXIMUM CONSTRUCTION LOAN", heroValue: fmt$(loan),
-      verdict: valueLimited ? "LIMITED BY AS-COMPLETED VALUE" : "FUNDED TO LENDER'S MAX LTC",
-      verdictColor: valueLimited ? WARN : GOOD,
-      outputs: [
-        ["Loan by cost (" + s.ncLtc + "% LTC)", fmt$(byCost)],
-        ["Loan cap by value (" + s.ncLtv + "% LTV)", fmt$(byValue)],
-        ["Total project cost", fmt$(cost)],
-        [s.ncOwnLand ? "Cash needed (land equity credited)" : "Cash needed", fmt$(cashIn)],
-        ["Points at closing", fmt$(loan * s.ncPoints / 100)],
-        ["Interest-only payment (fully drawn)", fmt$(loan * s.ncRate / 100 / 12)],
-        ["Interest-only payment (avg ~60% drawn)", fmt$(loan * 0.6 * s.ncRate / 100 / 12)]
-      ],
-      note: "Owner-occupants can often use a one-time-close construction-to-permanent loan (conventional, FHA or VA) that converts to a regular mortgage at completion."
-    };
-  }
 
   /* --------------------------------- RENDER ---------------------------------- */
   var LABEL = "display:block;font-family:'Jost',sans-serif;font-weight:400;font-size:12px;letter-spacing:.08em;color:rgba(242,237,225,.65);margin-bottom:7px;";
@@ -460,12 +419,11 @@
         '<button type="button" data-set="' + f.key + '" data-val="1" aria-pressed="' + on + '" style="' + BTN + (on ? ACT : IDLE) + '">YES</button>' +
         '<button type="button" data-set="' + f.key + '" data-val="0" aria-pressed="' + !on + '" style="' + BTN + (on ? IDLE : ACT) + '">NO</button></div></div>';
     }
-    if (f.kind === "choice") {
-      return '<div style="grid-column:1/-1;"><div class="calc-choice" role="group" aria-label="' + esc(f.label) + '">' +
-        f.options.map(function (o) {
-          var on = st[f.key] === o[0];
-          return '<button type="button" data-set="' + f.key + '" data-str="' + o[0] + '" aria-pressed="' + on + '" style="' + BTN + (on ? ACT : IDLE) + '">' + o[1] + '</button>';
-        }).join("") + '</div></div>';
+    if (f.kind === "select") {
+      return '<label style="display:block;"><span style="' + LABEL + '">' + f.label + '</span>' +
+        '<select data-select="' + f.key + '" class="calc-select">' +
+        f.options.map(function (o) { return '<option value="' + o[0] + '"' + (st[f.key] === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") +
+        '</select></label>';
     }
     return '<label style="display:block;"><span style="' + LABEL + '">' + f.label + '</span>' +
       '<span style="display:flex;align-items:center;border:1px solid rgba(242,237,225,.25);background:rgba(242,237,225,.05);padding:0 12px;">' +
@@ -513,6 +471,16 @@
       var v = parseFloat(e.target.value);
       st[k] = isNaN(v) ? 0 : v;
       renderOutputs();
+    });
+    // Dropdowns can change which fields apply (e.g. loan type), so re-render.
+    inputs.addEventListener("change", function (e) {
+      var k = e.target.getAttribute("data-select");
+      if (!k) return;
+      var v = e.target.value;
+      st[k] = v !== "" && !isNaN(+v) ? +v : v;
+      renderInputs();
+      var again = inputs.querySelector('[data-select="' + k + '"]');
+      if (again) again.focus();
     });
     inputs.addEventListener("click", function (e) {
       var b = e.target.closest("button[data-set]");
