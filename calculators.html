@@ -18,12 +18,18 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Jost:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="site.css">
 <style>
-  .calc-jump { position: sticky; top: 83px; z-index: 90; display: flex; justify-content: center; gap: 0; overflow-x: auto; scrollbar-width: none; background: rgba(4,29,43,.94); backdrop-filter: blur(14px); border-bottom: 1px solid rgba(196,165,107,.25); }
-  .calc-jump::-webkit-scrollbar { display: none; }
-  .calc-jump a { flex: 0 0 auto; padding: 15px 22px; font-family: 'Jost', sans-serif; font-weight: 500; font-size: 12px; letter-spacing: .18em; color: rgba(242,237,225,.6); border-bottom: 2px solid transparent; white-space: nowrap; }
-  .calc-jump a:hover, .calc-jump a.on { color: #c4a56b; border-bottom-color: #c4a56b; }
+  .calc-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .calc-pick button { text-align: left; cursor: pointer; background: rgba(242,237,225,.04); border: 1px solid rgba(242,237,225,.18); padding: 22px 24px; transition: border-color .25s ease, background .25s ease; }
+  .calc-pick button:hover { border-color: rgba(196,165,107,.6); }
+  .calc-pick button[aria-selected="true"] { background: #f2ede1; border-color: #c4a56b; }
+  .calc-pick .t { display: block; font-family: 'Jost', sans-serif; font-weight: 500; font-size: 13px; letter-spacing: .2em; color: #c4a56b; }
+  .calc-pick .d { display: block; margin-top: 8px; font-family: 'Jost', sans-serif; font-weight: 300; font-size: 14.5px; line-height: 1.55; color: rgba(242,237,225,.72); }
+  .calc-pick button[aria-selected="true"] .t { color: #8a7345; }
+  .calc-pick button[aria-selected="true"] .d { color: #3d4d59; }
+  .calc-pick button:focus-visible { outline: 2px solid #c4a56b; outline-offset: 2px; }
+  @media (max-width: 940px) { .calc-pick { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .calc-pick { gap: 10px; } .calc-pick button { padding: 16px 16px; } .calc-pick .t { font-size: 11.5px; letter-spacing: .14em; } .calc-pick .d { font-size: 13px; } }
   .calc-choice { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
-  @media (max-width: 1100px) { .calc-jump { justify-content: flex-start; } }
   @media (max-width: 940px) {
     .c-card { position: static !important; }
   }
@@ -47,11 +53,11 @@
 </header>
 
 <!-- HERO -->
-<section style="background: radial-gradient(120% 90% at 50% 0%, #0a3752 0%, #062e44 55%, #041d2b 100%); padding: 170px clamp(20px, 5vw, 40px) 90px; text-align: center;">
+<section style="background: radial-gradient(120% 90% at 50% 0%, #0a3752 0%, #062e44 55%, #041d2b 100%); padding: 150px clamp(20px, 5vw, 40px) 64px; text-align: center;">
   <div style="max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; align-items: center;">
     <div style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 12.5px; letter-spacing: .38em; text-indent: .38em; color: #c4a56b; animation: fadeUp .9s ease .1s both;">THE TBG CALCULATORS · DC · MD · VA</div>
     <h1 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(44px, 6vw, 76px); line-height: 1.06; color: #f2ede1; margin: 24px 0 0; text-wrap: balance; animation: fadeUp .9s ease .25s both;">Run the <em style="color: #c4a56b; font-weight: 400;">numbers</em> before the numbers run you.</h1>
-    <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 18px; line-height: 1.75; color: rgba(242,237,225,.8); max-width: 640px; margin: 26px 0 0; animation: fadeUp .9s ease .4s both;">Six independent calculators for buyers, homeowners and investors — each computed live as you type. Pick one below, or take the full financing guide with you.</p>
+    <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 18px; line-height: 1.75; color: rgba(242,237,225,.8); max-width: 640px; margin: 26px 0 0; animation: fadeUp .9s ease .4s both;">Six calculators for buyers, homeowners and investors, computed live as you type. Choose one below, or take the full financing guide with you.</p>
     <div style="display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 18px 28px; margin-top: 40px; animation: fadeUp .9s ease .55s both;">
       <a href="assets/tbg-dmv-financing-guide.pdf" download class="h-goldfill" style="background: #c4a56b; color: #062e44; font-family: 'Jost', sans-serif; font-weight: 500; font-size: 14px; letter-spacing: .18em; padding: 17px 36px;">DOWNLOAD NOW — FREE GUIDE</a>
       <a href="#guide" class="h-gold" style="font-family: 'Jost', sans-serif; font-weight: 500; font-size: 12.5px; letter-spacing: .2em; color: rgba(242,237,225,.8); border-bottom: 1px solid #c4a56b; padding-bottom: 5px;">WHAT'S INSIDE ↓</a>
@@ -59,20 +65,26 @@
   </div>
 </section>
 
-<nav class="calc-jump" aria-label="Calculators">
-    <a href="#fix-flip">FIX &AMP; FLIP</a>
-    <a href="#new-construction">NEW CONSTRUCTION</a>
-    <a href="#dscr">DSCR RENTAL</a>
-    <a href="#refinance">REFINANCE</a>
-    <a href="#affordability">AFFORDABILITY</a>
-    <a href="#max-mortgage">MAX MORTGAGE</a>
-  </nav>
+<!-- CALCULATOR PICKER -->
+<section style="background: #041d2b; padding: 56px clamp(20px, 5vw, 40px); border-top: 1px solid rgba(196,165,107,.2);">
+  <div style="max-width: 1240px; margin: 0 auto;">
+    <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b; margin-bottom: 22px;">CHOOSE A CALCULATOR</div>
+    <div class="calc-pick" role="tablist" aria-label="Calculators">
+      <button type="button" role="tab" id="tab-fix-flip" aria-controls="fix-flip" aria-selected="false" data-pick="fix-flip"><span class="t">FIX &amp; FLIP</span><span class="d">Profit, ROI and cash-on-cash on a rehab-and-resell deal.</span></button>
+      <button type="button" role="tab" id="tab-new-construction" aria-controls="new-construction" aria-selected="false" data-pick="new-construction"><span class="t">NEW CONSTRUCTION</span><span class="d">Build costs, draw interest and margin on a ground-up project.</span></button>
+      <button type="button" role="tab" id="tab-dscr" aria-controls="dscr" aria-selected="false" data-pick="dscr"><span class="t">DSCR RENTAL</span><span class="d">Will the rent carry the loan? Coverage ratio and cash flow.</span></button>
+      <button type="button" role="tab" id="tab-refinance" aria-controls="refinance" aria-selected="false" data-pick="refinance"><span class="t">REFINANCE</span><span class="d">Your new payment, monthly savings and break-even.</span></button>
+      <button type="button" role="tab" id="tab-affordability" aria-controls="affordability" aria-selected="false" data-pick="affordability"><span class="t">AFFORDABILITY</span><span class="d">What you can buy, and what discount points are worth.</span></button>
+      <button type="button" role="tab" id="tab-max-mortgage" aria-controls="max-mortgage" aria-selected="false" data-pick="max-mortgage"><span class="t">MAX MORTGAGE</span><span class="d">Your borrowing ceiling by loan type: conventional, FHA, VA, hard money or construction.</span></button>
+    </div>
+  </div>
+</section>
 
 <!-- FIX & FLIP -->
-<section id="fix-flip" data-calc="fixflip" style="background: #052232; padding: 110px clamp(20px, 5vw, 40px); scroll-margin-top: 130px; border-top: 1px solid rgba(196,165,107,.14);">
+<section id="fix-flip" data-calc="fixflip" role="tabpanel" aria-labelledby="tab-fix-flip" hidden style="background: #052232; padding: 72px clamp(20px, 5vw, 40px) 110px; scroll-margin-top: 90px;">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div style="margin-bottom: 50px; max-width: 760px;">
-      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">N° 01 · FIX &amp; FLIP</div>
+      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">FIX &amp; FLIP</div>
       <h2 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(36px, 4vw, 54px); line-height: 1.08; color: #f2ede1; margin: 16px 0 0; text-wrap: balance;">Will the <em style="color: #c4a56b; font-weight: 400;">flip</em> pay?</h2>
       <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 16px; line-height: 1.8; color: rgba(242,237,225,.72); margin: 18px 0 0;">Purchase, rehab, hard-money financing, holding and both closings — profit, ROI and cash-on-cash against our 8% / 30% bar.</p>
     </div>
@@ -94,10 +106,10 @@
 </section>
 
 <!-- NEW CONSTRUCTION -->
-<section id="new-construction" data-calc="construction" style="background: #062e44; padding: 110px clamp(20px, 5vw, 40px); scroll-margin-top: 130px; border-top: 1px solid rgba(196,165,107,.14);">
+<section id="new-construction" data-calc="construction" role="tabpanel" aria-labelledby="tab-new-construction" hidden style="background: #052232; padding: 72px clamp(20px, 5vw, 40px) 110px; scroll-margin-top: 90px;">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div style="margin-bottom: 50px; max-width: 760px;">
-      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">N° 02 · NEW CONSTRUCTION</div>
+      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">NEW CONSTRUCTION</div>
       <h2 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(36px, 4vw, 54px); line-height: 1.08; color: #f2ede1; margin: 16px 0 0; text-wrap: balance;">Build it on <em style="color: #c4a56b; font-weight: 400;">paper</em> first.</h2>
       <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 16px; line-height: 1.8; color: rgba(242,237,225,.72); margin: 18px 0 0;">Land, hard and soft costs, draw-based construction interest and the sale — with an optional subdivision model for multi-lot projects.</p>
     </div>
@@ -119,10 +131,10 @@
 </section>
 
 <!-- DSCR RENTAL -->
-<section id="dscr" data-calc="dscr" style="background: #052232; padding: 110px clamp(20px, 5vw, 40px); scroll-margin-top: 130px; border-top: 1px solid rgba(196,165,107,.14);">
+<section id="dscr" data-calc="dscr" role="tabpanel" aria-labelledby="tab-dscr" hidden style="background: #052232; padding: 72px clamp(20px, 5vw, 40px) 110px; scroll-margin-top: 90px;">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div style="margin-bottom: 50px; max-width: 760px;">
-      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">N° 03 · DSCR RENTAL</div>
+      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">DSCR RENTAL</div>
       <h2 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(36px, 4vw, 54px); line-height: 1.08; color: #f2ede1; margin: 16px 0 0; text-wrap: balance;">Does the rent carry the <em style="color: #c4a56b; font-weight: 400;">loan</em>?</h2>
       <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 16px; line-height: 1.8; color: rgba(242,237,225,.72); margin: 18px 0 0;">Net operating income against debt service — the ratio DSCR lenders qualify on — plus cap rate, cash flow and the largest loan the rent supports.</p>
     </div>
@@ -144,10 +156,10 @@
 </section>
 
 <!-- REFINANCE -->
-<section id="refinance" data-calc="refinance" style="background: #062e44; padding: 110px clamp(20px, 5vw, 40px); scroll-margin-top: 130px; border-top: 1px solid rgba(196,165,107,.14);">
+<section id="refinance" data-calc="refinance" role="tabpanel" aria-labelledby="tab-refinance" hidden style="background: #052232; padding: 72px clamp(20px, 5vw, 40px) 110px; scroll-margin-top: 90px;">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div style="margin-bottom: 50px; max-width: 760px;">
-      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">N° 04 · REFINANCE</div>
+      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">REFINANCE</div>
       <h2 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(36px, 4vw, 54px); line-height: 1.08; color: #f2ede1; margin: 16px 0 0; text-wrap: balance;">Is it time to <em style="color: #c4a56b; font-weight: 400;">refinance</em>?</h2>
       <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 16px; line-height: 1.8; color: rgba(242,237,225,.72); margin: 18px 0 0;">Rate-and-term or cash-out: new payment, monthly savings, break-even on closing costs and points, and what the reset does to lifetime interest.</p>
     </div>
@@ -169,10 +181,10 @@
 </section>
 
 <!-- AFFORDABILITY -->
-<section id="affordability" data-calc="affordability" style="background: #052232; padding: 110px clamp(20px, 5vw, 40px); scroll-margin-top: 130px; border-top: 1px solid rgba(196,165,107,.14);">
+<section id="affordability" data-calc="affordability" role="tabpanel" aria-labelledby="tab-affordability" hidden style="background: #052232; padding: 72px clamp(20px, 5vw, 40px) 110px; scroll-margin-top: 90px;">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div style="margin-bottom: 50px; max-width: 760px;">
-      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">N° 05 · AFFORDABILITY</div>
+      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">AFFORDABILITY</div>
       <h2 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(36px, 4vw, 54px); line-height: 1.08; color: #f2ede1; margin: 16px 0 0; text-wrap: balance;">What can you <em style="color: #c4a56b; font-weight: 400;">comfortably</em> buy?</h2>
       <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 16px; line-height: 1.8; color: rgba(242,237,225,.72); margin: 18px 0 0;">Your income, debts and down payment set the ceiling. Add discount points to see the lower rate, the upfront cost and how long they take to pay for themselves.</p>
     </div>
@@ -194,10 +206,10 @@
 </section>
 
 <!-- MAXIMUM MORTGAGE -->
-<section id="max-mortgage" data-calc="maxloan" style="background: #062e44; padding: 110px clamp(20px, 5vw, 40px); scroll-margin-top: 130px; border-top: 1px solid rgba(196,165,107,.14);">
+<section id="max-mortgage" data-calc="maxloan" role="tabpanel" aria-labelledby="tab-max-mortgage" hidden style="background: #052232; padding: 72px clamp(20px, 5vw, 40px) 110px; scroll-margin-top: 90px;">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div style="margin-bottom: 50px; max-width: 760px;">
-      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">N° 06 · MAXIMUM MORTGAGE</div>
+      <div style="font-family: 'Jost', sans-serif; font-weight: 400; font-size: 12px; letter-spacing: .34em; color: #c4a56b;">MAXIMUM MORTGAGE</div>
       <h2 style="font-family: 'Cormorant Garamond', serif; font-weight: 500; font-size: clamp(36px, 4vw, 54px); line-height: 1.08; color: #f2ede1; margin: 16px 0 0; text-wrap: balance;">Your ceiling, by <em style="color: #c4a56b; font-weight: 400;">loan type</em>.</h2>
       <p style="font-family: 'Jost', sans-serif; font-weight: 300; font-size: 16px; line-height: 1.8; color: rgba(242,237,225,.72); margin: 18px 0 0;">Conventional, FHA and VA are sized by your income and each program's rules. Hard money and construction loans are sized by the deal itself.</p>
     </div>

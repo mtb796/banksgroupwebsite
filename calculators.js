@@ -533,23 +533,38 @@
     renderInputs();
   }
 
+  // Show one calculator at a time, chosen from the picker; the URL hash
+  // (e.g. calculators.html#refinance) makes each one linkable.
+  function select(id, scroll, keepHash) {
+    var panel = document.getElementById(id);
+    if (!panel || !panel.hasAttribute("data-calc")) return false;
+    Array.prototype.forEach.call(document.querySelectorAll("section[data-calc]"), function (s) { s.hidden = s !== panel; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-pick]"), function (b) {
+      var on = b.getAttribute("data-pick") === id;
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+    });
+    if (!keepHash && history.replaceState) history.replaceState(null, "", "#" + id);
+    // On phones the picker is tall — bring the calculator into view.
+    if (scroll && panel.getBoundingClientRect().top > window.innerHeight * 0.85) panel.scrollIntoView({ behavior: "smooth" });
+    return true;
+  }
+
   function boot() {
     Array.prototype.forEach.call(document.querySelectorAll("[data-calc]"), mount);
-    // Highlight the jump-bar link for the calculator in view.
-    var links = document.querySelectorAll(".calc-jump a");
-    if (!links.length || !("IntersectionObserver" in window)) return;
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) {
-        if (!en.isIntersecting) return;
-        Array.prototype.forEach.call(links, function (a) {
-          var on = a.getAttribute("href") === "#" + en.target.id;
-          a.classList.toggle("on", on);
-          // Keep the active link visible when the bar scrolls sideways on phones.
-          if (on) a.parentNode.scrollTo({ left: a.offsetLeft - (a.parentNode.clientWidth - a.offsetWidth) / 2, behavior: "smooth" });
-        });
+    var picks = Array.prototype.slice.call(document.querySelectorAll("[data-pick]"));
+    picks.forEach(function (b, i) {
+      b.addEventListener("click", function () { select(b.getAttribute("data-pick"), true); });
+      b.addEventListener("keydown", function (e) {
+        var d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!d) return;
+        e.preventDefault();
+        var next = picks[(i + d + picks.length) % picks.length];
+        next.focus(); select(next.getAttribute("data-pick"), false);
       });
-    }, { rootMargin: "-45% 0px -50% 0px" });
-    Array.prototype.forEach.call(document.querySelectorAll("section[data-calc]"), function (s) { io.observe(s); });
+    });
+    if (!select(location.hash.slice(1), false)) select(picks[0].getAttribute("data-pick"), false, true);
+    window.addEventListener("hashchange", function () { select(location.hash.slice(1), true); });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();
