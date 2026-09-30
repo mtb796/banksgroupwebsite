@@ -10,6 +10,7 @@
     ["Buyers", "buyers.html"],
     ["Sellers", "sellers.html"],
     ["Investors", "investors.html"],
+    ["Calculators", "calculators.html"],
     ["Deal Analyzer", pre + "#analyzer"],
     ["About", pre + "#about"],
     ["Contact", pre + "#contact"]
