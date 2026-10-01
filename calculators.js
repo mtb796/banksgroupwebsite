@@ -790,6 +790,7 @@
   function boot() {
     Array.prototype.forEach.call(document.querySelectorAll("[data-calc]"), mount);
     var picks = Array.prototype.slice.call(document.querySelectorAll("[data-pick]"));
+    if (!picks.length) return; // a single calculator (e.g. the Sellers page) is always shown
     picks.forEach(function (b, i) {
       b.addEventListener("click", function () { showCalc(b.getAttribute("data-pick"), true); });
       b.addEventListener("keydown", function (e) {
