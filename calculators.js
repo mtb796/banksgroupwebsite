@@ -47,7 +47,7 @@
     return Object.assign({ kind: "number", key: key, label: label, prefix: prefix || "", suffix: suffix || "", step: step || 1 }, opts || {});
   }
   function toggle(key, label) { return { kind: "toggle", key: key, label: label }; }
-  function dropdown(key, label, options) { return { kind: "select", key: key, label: label, options: options }; }
+  function dropdown(key, label, options, opts) { return Object.assign({ kind: "select", key: key, label: label, options: options }, opts || {}); }
   // A dollar amount and its % of a base value (e.g. down payment of price), edited either way; state holds the %.
   function moneyPct(key, label, base, opts) { return Object.assign({ kind: "moneypct", key: key, label: label, base: base }, opts || {}); }
 
@@ -110,9 +110,60 @@
   /* ------------------------------- CALCULATORS ------------------------------- */
   var CALCS = {};
 
+  // ---------- Seller credit: price cut vs. closing costs vs. discount points ----------
+  // Seller-paid concession caps (% of price) by loan program and down payment.
+  function concessionCap(s, price) {
+    if (s.type === "fha") return price * 0.06;
+    if (s.type === "va") return price * 0.04 + price * CLOSING_PCT / 100; // VA: 4% plus normal closing costs
+    return price * (s.down > 25 ? 0.09 : s.down >= 10 ? 0.06 : 0.03);
+  }
+  function creditOptions(s, c) {
+    var X = s.credit, closing = s.price * CLOSING_PCT / 100, cap = concessionCap(s, s.price);
+    // A. Price reduction: same down-payment %, lower price (also lowers taxes and PMI).
+    var P2 = Math.max(0, s.price - X);
+    var c2 = homeCost(s, P2, s.down, s.rate, P2 * s.taxPct / 100 / 12, s.insYr / 12);
+    var cut = { monthly: c.total - c2.total, cash: X * s.down / 100 };
+    // B. Closing-cost credit: no payment change; only usable up to actual costs and the program cap.
+    var cc = Math.min(X, closing, cap);
+    // C. Discount points: 1 point = 1% of the loan, ~0.25% off the rate, most lenders cap around 4 points.
+    var ptDollars = Math.min(X, cap, c.loan * 0.04);
+    var pts = c.loan > 0 ? ptDollars / c.loan * 100 : 0;
+    var newRate = Math.max(0, s.rate - pts * RATE_DROP_PER_POINT);
+    var ptSave = pmt(c.loan, s.rate, s.term) - pmt(c.loan, newRate, s.term);
+    return { X: X, cap: cap, closing: closing, cut: cut, cc: cc, pts: pts, ptDollars: ptDollars, newRate: newRate, ptSave: ptSave };
+  }
+  function creditHtml(s, c) {
+    if (!(s.credit > 0)) {
+      return '<div class="calc-credit calc-credit-empty"><b>Negotiating a seller credit?</b> Enter it under "Seller credit" to see whether it does more as a price reduction, closing-cost help or discount points.</div>';
+    }
+    var o = creditOptions(s, c);
+    var bestMonthly = o.ptSave >= o.cut.monthly ? "points" : "cut";
+    function row(key, name, monthly, cash, tag) {
+      return '<div class="calc-credit-row' + (tag ? " best" : "") + '"><span class="n">' + name + (tag ? '<em>' + tag + '</em>' : '') + '</span>' +
+        '<span class="m">' + (monthly > 0.5 ? "−" + fmt$(monthly) + "/mo" : "—") + '</span><span class="c">' + (cash > 0.5 ? fmt$(cash) + " less cash" : "—") + '</span></div>';
+    }
+    var why = [];
+    var spare = Math.max(0, Math.min(o.X, o.cap) - o.ptDollars);
+    var yrs = o.ptSave > 0 ? Math.round(o.ptDollars / o.ptSave / 12 * 10) / 10 : 0;
+    if (bestMonthly === "points") {
+      why.push("<b>Points lower the payment most:</b> " + fmt$(o.ptDollars) + " buys about " + +o.pts.toFixed(2) + " points (rate ≈ " + fmtRate(o.newRate) + "), cutting the rate on the whole loan, while a price cut only trims the loan by the credit." +
+        (spare > 0.5 ? " The other " + fmt$(spare) + " can cover closing costs." : "") +
+        " They take about " + yrs + " years to earn back, so if you may sell or refinance sooner, use the credit for closing costs instead.");
+    } else {
+      why.push("<b>A price cut lowers the payment most</b> here, and it also trims property taxes and PMI and helps if the appraisal comes in low.");
+    }
+    why.push("<b>Short on cash?</b> Closing-cost help keeps up to " + fmt$(o.cc) + " in your pocket at settlement.");
+    if (o.X > o.cap) why.push("<b>Heads up:</b> " + PROGRAMS[s.type].name + " caps seller credits at about " + fmt$(o.cap) + " here. Anything above that is lost unless it's taken as a price reduction.");
+    return '<div class="calc-credit"><div class="calc-ctitle">YOUR ' + fmt$(o.X) + ' SELLER CREDIT, THREE WAYS</div>' +
+      row("cut", "Price reduction", o.cut.monthly, o.cut.cash, bestMonthly === "cut" ? "LOWEST PAYMENT" : "") +
+      row("cc", "Closing-cost help", 0, o.cc, "MOST CASH SAVED") +
+      row("pts", "Discount points", o.ptSave, 0, bestMonthly === "points" ? "LOWEST PAYMENT" : "") +
+      '<p>' + why.join(" ") + '</p></div>';
+  }
+
   // ---------- Mortgage payment ----------
   CALCS.payment = {
-    state: { price: 500000, down: 10, type: "conv", term: 30, rate: 6.5, taxPct: 1.0, insYr: 1750, hoa: 0, vaSubsequent: false, vaExempt: false },
+    state: { price: 500000, down: 10, type: "conv", term: 30, rate: 6.5, taxPct: 1.0, insYr: 1750, hoa: 0, credit: 0, vaSubsequent: false, vaExempt: false },
     compute: function (s) {
       var p = PROGRAMS[s.type];
       var c = homeCost(s, s.price, s.down, s.rate, s.price * s.taxPct / 100 / 12, s.insYr / 12);
@@ -132,11 +183,11 @@
       var fee = feeRow(s, c); if (fee) outputs.splice(1, 0, fee);
       return {
         groups: [
-          { fields: [ num("price", "Home price", "$", "", 5000, { slider: [100000, 2000000, 5000] }), moneyPct("down", "Down payment", "price", { slider: [0, 40, 0.5] }), dropdown("type", "Loan type", TYPE_OPTIONS), num("rate", "Interest rate", "", "%", 0.125, { slider: [3, 10, 0.125] }) ].concat(vaQuestions(s)) },
+          { fields: [ num("price", "Home price", "$", "", 5000, { slider: [100000, 2000000, 5000] }), moneyPct("down", "Down payment", "price", { slider: [0, 40, 0.5] }), dropdown("type", "Loan type", TYPE_OPTIONS), num("rate", "Interest rate", "", "%", 0.125, { slider: [3, 10, 0.125] }) ].concat(vaQuestions(s)).concat([ num("credit", "Seller credit (optional)", "$", "", 500, { slider: [0, 50000, 500] }) ]) },
           { adv: true, fields: [ dropdown("term", "Loan term", TERM_OPTIONS), moneyPct("taxPct", "Property tax (per year)", "price"), num("insYr", "Home insurance", "$", "/yr", 50), num("hoa", "HOA dues", "$", "/mo", 10) ] }
         ],
         heroLabel: "YOUR MONTHLY PAYMENT", heroValue: fmt$(c.total),
-        verdict: verdict, verdictColor: color, chart: paymentChart(s.type, c), outputs: outputs,
+        verdict: verdict, verdictColor: color, chart: paymentChart(s.type, c), outputs: outputs, extra: creditHtml(s, c),
         note: "Mortgage insurance is added automatically for your loan type and down payment. Closing costs are estimated at 2.5% of the price."
       };
     }
@@ -302,6 +353,85 @@
     }
   };
 
+  // ---------- Seller net sheet ----------
+  // Seller's customary share of transfer / recordation taxes, as a function of price.
+  // 2026 rates. DC and Virginia: the seller customarily pays the transfer / grantor
+  // taxes and the buyer pays recordation. Maryland: state transfer tax and the county
+  // transfer and recordation taxes are customarily split 50/50.
+  function pct(p, r) { return p * r / 100; }
+  function vaTaxes(p, nova) {
+    var t = [["VA grantor's tax (0.1%)", Math.ceil(p / 500) * 0.5]];
+    if (nova) t.push(["NoVA congestion relief fee (0.1%)", Math.ceil(p / 100) * 0.1], ["NoVA WMATA capital fee (0.1%)", Math.ceil(p / 100) * 0.1]);
+    return t;
+  }
+  // Maryland seller half: state 0.5% + county transfer + county recordation.
+  function mdTaxes(name, transferPct, recordation) {
+    return function (p) {
+      var t = [["MD state transfer tax (seller half)", pct(p, 0.25)]];
+      if (transferPct(p) > 0) t.push([name + " transfer tax (seller half)", pct(p, transferPct(p)) / 2]);
+      t.push([name + " recordation tax (seller half)", recordation(p) / 2]);
+      return t;
+    };
+  }
+  function flat(r) { return function () { return r; }; }
+  function perFiveHundred(rate) { return function (p) { return Math.ceil(p / 500) * rate; }; }
+  // Montgomery recordation: $4.45 per $500 on the whole price, plus a premium on each price band.
+  function montgomeryRecordation(p) {
+    var bands = [[500000, 600000, 2.30], [600000, 750000, 5.75], [750000, 1000000, 6.33], [1000000, Infinity, 6.90]];
+    return bands.reduce(function (sum, b) { return sum + Math.max(0, Math.min(p, b[1]) - b[0]) / 500 * b[2]; }, Math.ceil(p / 500) * 4.45);
+  }
+  var MD_NOTE = "Maryland: the state and county transfer and recordation taxes are customarily split 50/50 between buyer and seller, so the seller's half is shown. Contracts can change the split, and owner-occupant and first-time buyer exemptions can lower the total.";
+  var JURIS = {
+    nova: { label: "Northern Virginia", note: "Virginia: sellers pay the grantor's tax plus the two Northern Virginia regional fees (about 0.3% in total); the buyer pays recordation.", taxes: function (p) { return vaTaxes(p, true); } },
+    va: { label: "Virginia, outside Northern Virginia", note: "Virginia: sellers pay the state grantor's tax (0.1%); the buyer pays recordation.", taxes: function (p) { return vaTaxes(p, false); } },
+    dc: { label: "Washington, DC", note: "DC: sellers customarily pay the deed transfer tax (1.1% under $400,000, 1.45% of the whole price at $400,000 and up); the buyer pays recordation.",
+      taxes: function (p) { return [["DC deed transfer tax (" + (p < 400000 ? "1.1" : "1.45") + "%)", pct(p, p < 400000 ? 1.1 : 1.45)]]; } },
+    mont: { label: "Montgomery County, MD", note: MD_NOTE, taxes: mdTaxes("Montgomery", flat(1.0), montgomeryRecordation) },
+    pg: { label: "Prince George's County, MD", note: MD_NOTE, taxes: mdTaxes("Prince George's", flat(1.4), perFiveHundred(2.75)) },
+    charles: { label: "Charles County, MD", note: MD_NOTE, taxes: mdTaxes("Charles", flat(0.5), perFiveHundred(7.0)) },
+    calvert: { label: "Calvert County, MD", note: MD_NOTE, taxes: mdTaxes("Calvert", flat(0), perFiveHundred(5.0)) },
+    stmarys: { label: "St. Mary's County, MD", note: MD_NOTE, taxes: mdTaxes("St. Mary's", flat(1.0), perFiveHundred(4.0)) },
+    aa: { label: "Anne Arundel County, MD", note: MD_NOTE, taxes: mdTaxes("Anne Arundel", function (p) { return p >= 1000000 ? 1.5 : 1.0; }, perFiveHundred(3.5)) },
+    howard: { label: "Howard County, MD", note: MD_NOTE, taxes: mdTaxes("Howard", flat(1.25), perFiveHundred(2.5)) }
+  };
+  var JURIS_OPTIONS = Object.keys(JURIS).map(function (k) { return [k, JURIS[k].label]; });
+  CALCS.netsheet = {
+    state: { price: 650000, payoff: 380000, juris: "nova", listPct: 3, buyerPct: 2.5, credit: 0, second: 0, settlement: 1000, other: 0 },
+    compute: function (s) {
+      var j = JURIS[s.juris] || JURIS.nova;
+      var taxes = j.taxes(s.price);
+      var taxTotal = taxes.reduce(function (a, t) { return a + t[1]; }, 0);
+      var listing = s.price * s.listPct / 100, buyerSide = s.price * s.buyerPct / 100;
+      var payoffs = s.payoff + s.second;
+      var costs = listing + buyerSide + taxTotal + s.credit + s.settlement + s.other;
+      var net = s.price - payoffs - costs;
+      var outputs = [
+        ["Sale price", fmt$(s.price)],
+        ["Mortgage payoff" + (s.second > 0 ? "s" : ""), "−" + fmt$(payoffs)],
+        ["Listing commission (" + +s.listPct.toFixed(2) + "%)", "−" + fmt$(listing)],
+        ["Buyer's agent compensation (" + +s.buyerPct.toFixed(2) + "%)", "−" + fmt$(buyerSide)]
+      ];
+      taxes.forEach(function (t) { outputs.push([t[0], "−" + fmt$(t[1])]); });
+      if (s.credit > 0) outputs.push(["Credit to buyer", "−" + fmt$(s.credit)]);
+      outputs.push(["Settlement, title & payoff fees", "−" + fmt$(s.settlement)]);
+      if (s.other > 0) outputs.push(["Other costs", "−" + fmt$(s.other)]);
+      outputs.push(["Total selling costs", fmt$(costs) + " (" + fmtPct(s.price > 0 ? costs / s.price : NaN) + ")"]);
+      return {
+        groups: [
+          { fields: [ num("price", "Sale price", "$", "", 5000, { slider: [100000, 2500000, 5000] }), num("payoff", "Mortgage payoff balance", "$", "", 1000, { slider: [0, 2000000, 1000] }), dropdown("juris", "Where is the home?", JURIS_OPTIONS, { wide: true }), num("credit", "Credit to the buyer (optional)", "$", "", 500, { slider: [0, 50000, 500] }) ] },
+          { adv: true, fields: [ num("listPct", "Listing commission", "", "%", 0.25), num("buyerPct", "Buyer's agent compensation", "", "%", 0.25), num("second", "Second mortgage / HELOC", "$", "", 1000), num("settlement", "Settlement, title & payoff fees", "$", "", 100), num("other", "Other (repairs, HOA docs, warranty)", "$", "", 100) ] }
+        ],
+        heroLabel: "ESTIMATED NET PROCEEDS", heroValue: fmt$(net),
+        verdict: net < 0 ? "SHORT AT CLOSING — YOU'D BRING " + fmt$(-net) : "YOU KEEP " + fmtPct(s.price > 0 ? net / s.price : NaN, 0) + " OF THE SALE PRICE",
+        verdictColor: net < 0 ? BAD : GOOD,
+        chartTitle: "WHERE THE SALE PRICE GOES",
+        chart: { segments: [["Mortgage payoff", payoffs, C.navy], ["Commissions", listing + buyerSide, C.gold], ["Transfer taxes", taxTotal, C.rust], ["Fees & credits", s.credit + s.settlement + s.other, C.teal], ["Net to you", net, C.green]] },
+        outputs: outputs,
+        note: j.note + " Commissions are negotiable, and buyer's agent compensation is agreed in each sale. Estimate only — property tax and HOA prorations and exact payoff figures come from your settlement statement."
+      };
+    }
+  };
+
   // ---------- Fix & Flip ----------
   CALCS.fixflip = {
     state: { purchase: 450000, closingBuyPct: 2, rehab: 85000, arv: 650000, months: 6, holdMo: 850, ltc: 85, rate: 10.5, points: 2, commissionPct: 5, sellClosePct: 1.5 },
@@ -463,7 +593,7 @@
         '<button type="button" data-set="' + f.key + '" data-val="0" aria-pressed="' + !on + '" style="' + BTN + (on ? IDLE : ACT) + '">NO</button></div></div>';
     }
     if (f.kind === "select") {
-      return '<label style="display:block;"><span style="' + LABEL + '">' + f.label + '</span>' +
+      return '<label style="display:block;"' + (f.wide ? ' class="calc-wide"' : '') + '><span style="' + LABEL + '">' + f.label + '</span>' +
         '<select data-select="' + f.key + '" class="calc-select">' +
         f.options.map(function (o) { return '<option value="' + o[0] + '"' + (st[f.key] === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") +
         '</select></label>';
@@ -520,7 +650,8 @@
     // Result-card slots for the price scale and the chart, created once.
     var scaleEl = document.createElement("div"); scaleEl.className = "calc-scale";
     var chartEl = document.createElement("div"); chartEl.className = "calc-chart";
-    card.insertBefore(scaleEl, outs); card.insertBefore(chartEl, outs);
+    var extraEl = document.createElement("div"); extraEl.className = "calc-extra";
+    card.insertBefore(scaleEl, outs); card.insertBefore(chartEl, outs); outs.parentNode.insertBefore(extraEl, outs.nextSibling);
 
     function renderInputs() {
       var r = calc.compute(st);
@@ -551,6 +682,7 @@
           '<span style="font-family:\'Jost\',sans-serif;font-weight:300;font-size:14px;color:#3d4d59;">' + o[0] + '</span>' +
           '<span style="font-family:\'Jost\',sans-serif;font-weight:500;font-size:15px;color:#062e44;white-space:nowrap;">' + o[1] + '</span></div>';
       }).join("");
+      extraEl.innerHTML = r.extra || "";
       root.querySelector(".c-note").textContent = r.note || "";
     }
 
