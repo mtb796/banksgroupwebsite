@@ -47,7 +47,7 @@
     return Object.assign({ kind: "number", key: key, label: label, prefix: prefix || "", suffix: suffix || "", step: step || 1 }, opts || {});
   }
   function toggle(key, label) { return { kind: "toggle", key: key, label: label }; }
-  function dropdown(key, label, options) { return { kind: "select", key: key, label: label, options: options }; }
+  function dropdown(key, label, options, opts) { return Object.assign({ kind: "select", key: key, label: label, options: options }, opts || {}); }
   // A dollar amount and its % of a base value (e.g. down payment of price), edited either way; state holds the %.
   function moneyPct(key, label, base, opts) { return Object.assign({ kind: "moneypct", key: key, label: label, base: base }, opts || {}); }
 
@@ -355,19 +355,48 @@
 
   // ---------- Seller net sheet ----------
   // Seller's customary share of transfer / recordation taxes, as a function of price.
-  // Provisional rates — to be confirmed against current DC / VA / MD schedules.
+  // 2026 rates. DC and Virginia: the seller customarily pays the transfer / grantor
+  // taxes and the buyer pays recordation. Maryland: state transfer tax and the county
+  // transfer and recordation taxes are customarily split 50/50.
   function pct(p, r) { return p * r / 100; }
+  function vaTaxes(p, nova) {
+    var t = [["VA grantor's tax (0.1%)", Math.ceil(p / 500) * 0.5]];
+    if (nova) t.push(["NoVA congestion relief fee (0.1%)", Math.ceil(p / 100) * 0.1], ["NoVA WMATA capital fee (0.1%)", Math.ceil(p / 100) * 0.1]);
+    return t;
+  }
+  // Maryland seller half: state 0.5% + county transfer + county recordation.
+  function mdTaxes(name, transferPct, recordation) {
+    return function (p) {
+      var t = [["MD state transfer tax (seller half)", pct(p, 0.25)]];
+      if (transferPct(p) > 0) t.push([name + " transfer tax (seller half)", pct(p, transferPct(p)) / 2]);
+      t.push([name + " recordation tax (seller half)", recordation(p) / 2]);
+      return t;
+    };
+  }
+  function flat(r) { return function () { return r; }; }
+  function perFiveHundred(rate) { return function (p) { return Math.ceil(p / 500) * rate; }; }
+  // Montgomery recordation: $4.45 per $500 on the whole price, plus a premium on each price band.
+  function montgomeryRecordation(p) {
+    var bands = [[500000, 600000, 2.30], [600000, 750000, 5.75], [750000, 1000000, 6.33], [1000000, Infinity, 6.90]];
+    return bands.reduce(function (sum, b) { return sum + Math.max(0, Math.min(p, b[1]) - b[0]) / 500 * b[2]; }, Math.ceil(p / 500) * 4.45);
+  }
+  var MD_NOTE = "Maryland: the state and county transfer and recordation taxes are customarily split 50/50 between buyer and seller, so the seller's half is shown. Contracts can change the split, and owner-occupant and first-time buyer exemptions can lower the total.";
   var JURIS = {
-    dc: { label: "Washington, DC", note: "DC: sellers customarily pay the deed transfer tax (1.1% under $400,000, 1.45% at $400,000 and up); buyers pay recordation.",
-      taxes: function (p) { return [["DC deed transfer tax", pct(p, p < 400000 ? 1.1 : 1.45)]]; } },
-    nova: { label: "Northern Virginia", note: "Virginia: sellers pay the state grantor's tax and the Northern Virginia congestion relief fee; buyers pay recordation.",
-      taxes: function (p) { return [["VA grantor's tax (0.1%)", pct(p, 0.1)], ["NoVA congestion relief fee (0.1%)", pct(p, 0.1)]]; } },
-    md: { label: "Maryland (state share only)", note: "Maryland: the 0.5% state transfer tax is customarily split, so the seller pays 0.25%; county transfer and recordation taxes vary.",
-      taxes: function (p) { return [["MD state transfer tax (seller half)", pct(p, 0.25)]]; } }
+    nova: { label: "Northern Virginia", note: "Virginia: sellers pay the grantor's tax plus the two Northern Virginia regional fees (about 0.3% in total); the buyer pays recordation.", taxes: function (p) { return vaTaxes(p, true); } },
+    va: { label: "Virginia, outside Northern Virginia", note: "Virginia: sellers pay the state grantor's tax (0.1%); the buyer pays recordation.", taxes: function (p) { return vaTaxes(p, false); } },
+    dc: { label: "Washington, DC", note: "DC: sellers customarily pay the deed transfer tax (1.1% under $400,000, 1.45% of the whole price at $400,000 and up); the buyer pays recordation.",
+      taxes: function (p) { return [["DC deed transfer tax (" + (p < 400000 ? "1.1" : "1.45") + "%)", pct(p, p < 400000 ? 1.1 : 1.45)]]; } },
+    mont: { label: "Montgomery County, MD", note: MD_NOTE, taxes: mdTaxes("Montgomery", flat(1.0), montgomeryRecordation) },
+    pg: { label: "Prince George's County, MD", note: MD_NOTE, taxes: mdTaxes("Prince George's", flat(1.4), perFiveHundred(2.75)) },
+    charles: { label: "Charles County, MD", note: MD_NOTE, taxes: mdTaxes("Charles", flat(0.5), perFiveHundred(7.0)) },
+    calvert: { label: "Calvert County, MD", note: MD_NOTE, taxes: mdTaxes("Calvert", flat(0), perFiveHundred(5.0)) },
+    stmarys: { label: "St. Mary's County, MD", note: MD_NOTE, taxes: mdTaxes("St. Mary's", flat(1.0), perFiveHundred(4.0)) },
+    aa: { label: "Anne Arundel County, MD", note: MD_NOTE, taxes: mdTaxes("Anne Arundel", function (p) { return p >= 1000000 ? 1.5 : 1.0; }, perFiveHundred(3.5)) },
+    howard: { label: "Howard County, MD", note: MD_NOTE, taxes: mdTaxes("Howard", flat(1.25), perFiveHundred(2.5)) }
   };
   var JURIS_OPTIONS = Object.keys(JURIS).map(function (k) { return [k, JURIS[k].label]; });
   CALCS.netsheet = {
-    state: { price: 650000, payoff: 380000, juris: "nova", listPct: 3, buyerPct: 2.5, credit: 0, second: 0, settlement: 1500, other: 0 },
+    state: { price: 650000, payoff: 380000, juris: "nova", listPct: 3, buyerPct: 2.5, credit: 0, second: 0, settlement: 1000, other: 0 },
     compute: function (s) {
       var j = JURIS[s.juris] || JURIS.nova;
       var taxes = j.taxes(s.price);
@@ -389,7 +418,7 @@
       outputs.push(["Total selling costs", fmt$(costs) + " (" + fmtPct(s.price > 0 ? costs / s.price : NaN) + ")"]);
       return {
         groups: [
-          { fields: [ num("price", "Sale price", "$", "", 5000, { slider: [100000, 2500000, 5000] }), num("payoff", "Mortgage payoff balance", "$", "", 1000, { slider: [0, 2000000, 1000] }), dropdown("juris", "Where is the home?", JURIS_OPTIONS), num("credit", "Credit to the buyer (optional)", "$", "", 500, { slider: [0, 50000, 500] }) ] },
+          { fields: [ num("price", "Sale price", "$", "", 5000, { slider: [100000, 2500000, 5000] }), num("payoff", "Mortgage payoff balance", "$", "", 1000, { slider: [0, 2000000, 1000] }), dropdown("juris", "Where is the home?", JURIS_OPTIONS, { wide: true }), num("credit", "Credit to the buyer (optional)", "$", "", 500, { slider: [0, 50000, 500] }) ] },
           { adv: true, fields: [ num("listPct", "Listing commission", "", "%", 0.25), num("buyerPct", "Buyer's agent compensation", "", "%", 0.25), num("second", "Second mortgage / HELOC", "$", "", 1000), num("settlement", "Settlement, title & payoff fees", "$", "", 100), num("other", "Other (repairs, HOA docs, warranty)", "$", "", 100) ] }
         ],
         heroLabel: "ESTIMATED NET PROCEEDS", heroValue: fmt$(net),
@@ -564,7 +593,7 @@
         '<button type="button" data-set="' + f.key + '" data-val="0" aria-pressed="' + !on + '" style="' + BTN + (on ? IDLE : ACT) + '">NO</button></div></div>';
     }
     if (f.kind === "select") {
-      return '<label style="display:block;"><span style="' + LABEL + '">' + f.label + '</span>' +
+      return '<label style="display:block;"' + (f.wide ? ' class="calc-wide"' : '') + '><span style="' + LABEL + '">' + f.label + '</span>' +
         '<select data-select="' + f.key + '" class="calc-select">' +
         f.options.map(function (o) { return '<option value="' + o[0] + '"' + (st[f.key] === o[0] ? " selected" : "") + '>' + esc(o[1]) + '</option>'; }).join("") +
         '</select></label>';
