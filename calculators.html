@@ -50,21 +50,23 @@
 <section style="background: #041d2b; padding: 56px clamp(20px, 5vw, 40px); border-top: 1px solid rgba(196,165,107,.2);">
   <div style="max-width: 1240px; margin: 0 auto;">
     <div role="tablist" aria-label="Calculators">
-      <div class="calc-pick-label">FOR HOMEBUYERS &amp; HOMEOWNERS</div>
-      <div class="calc-pick calc-pick-4">
-        <button type="button" role="tab" id="tab-payment" aria-controls="payment" aria-selected="false" data-pick="payment"><span class="t">MORTGAGE PAYMENT</span><span class="d">Your monthly payment with taxes, insurance and PMI.</span></button>
-        <button type="button" role="tab" id="tab-affordability" aria-controls="affordability" aria-selected="false" data-pick="affordability"><span class="t">AFFORDABILITY</span><span class="d">Slide to see what price fits your budget.</span></button>
-        <button type="button" role="tab" id="tab-max-mortgage" aria-controls="max-mortgage" aria-selected="false" data-pick="max-mortgage"><span class="t">MAX MORTGAGE</span><span class="d">The most you could borrow: conventional, FHA or VA.</span></button>
-        <button type="button" role="tab" id="tab-refinance" aria-controls="refinance" aria-selected="false" data-pick="refinance"><span class="t">REFINANCE</span><span class="d">Your new payment, monthly savings and break-even.</span></button>
+      <div class="calc-pick-group">
+        <div class="calc-pick-label">FOR HOMEBUYERS</div>
+        <div class="calc-pick calc-pick-3">
+          <button type="button" role="tab" id="tab-payment" aria-controls="payment" aria-selected="false" data-pick="payment"><span class="t">MORTGAGE PAYMENT</span><span class="d">Your monthly payment with taxes, insurance and PMI.</span></button>
+          <button type="button" role="tab" id="tab-affordability" aria-controls="affordability" aria-selected="false" data-pick="affordability"><span class="t">AFFORDABILITY</span><span class="d">Slide to see what price fits your budget.</span></button>
+          <button type="button" role="tab" id="tab-max-mortgage" aria-controls="max-mortgage" aria-selected="false" data-pick="max-mortgage"><span class="t">MAX MORTGAGE</span><span class="d">The most you could borrow: conventional, FHA or VA.</span></button>
+        </div>
       </div>
       <div class="calc-pick-row">
-        <div>
-          <div class="calc-pick-label">FOR SELLERS</div>
-          <div class="calc-pick calc-pick-1">
+        <div class="calc-pick-group">
+          <div class="calc-pick-label">FOR SELLERS &amp; HOMEOWNERS</div>
+          <div class="calc-pick calc-pick-2">
             <button type="button" role="tab" id="tab-net-sheet" aria-controls="net-sheet" aria-selected="false" data-pick="net-sheet"><span class="t">SELLER NET SHEET</span><span class="d">What you walk away with after the sale.</span></button>
+            <button type="button" role="tab" id="tab-refinance" aria-controls="refinance" aria-selected="false" data-pick="refinance"><span class="t">REFINANCE</span><span class="d">Your new payment, monthly savings and break-even.</span></button>
           </div>
         </div>
-        <div>
+        <div class="calc-pick-group">
           <div class="calc-pick-label">FOR INVESTORS</div>
           <div class="calc-pick calc-pick-3">
             <button type="button" role="tab" id="tab-fix-flip" aria-controls="fix-flip" aria-selected="false" data-pick="fix-flip"><span class="t">FIX &amp; FLIP</span><span class="d">Profit, ROI and cash-on-cash on a rehab-and-resell deal.</span></button>
