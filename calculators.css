@@ -2,9 +2,8 @@
 .calc-pick { display: grid; gap: 14px; }
 .calc-pick-4 { grid-template-columns: repeat(4, 1fr); }
 .calc-pick-3 { grid-template-columns: repeat(3, 1fr); }
-.calc-pick-1 { grid-template-columns: 1fr; height: calc(100% - 25px); }
-.calc-pick-1 button { height: 100%; }
-.calc-pick-row { display: grid; grid-template-columns: 1fr 3fr; gap: 14px; margin-top: 26px; }
+.calc-pick-2 { grid-template-columns: repeat(2, 1fr); }
+.calc-pick-row { display: grid; grid-template-columns: 2fr 3fr; gap: 14px 30px; margin-top: 26px; }
 .calc-pick-label { font-family: 'Jost', sans-serif; font-weight: 500; font-size: 11px; letter-spacing: .26em; color: rgba(242,237,225,.5); margin: 0 0 12px; }
 .calc-pick + .calc-pick-label { margin-top: 26px; }
 .calc-pick button { text-align: left; cursor: pointer; background: rgba(242,237,225,.04); border: 1px solid rgba(242,237,225,.18); padding: 22px 24px; transition: border-color .25s ease, background .25s ease; }
@@ -15,8 +14,9 @@
 .calc-pick button[aria-selected="true"] .t { color: #8a7345; }
 .calc-pick button[aria-selected="true"] .d { color: #3d4d59; }
 .calc-pick button:focus-visible { outline: 2px solid #c4a56b; outline-offset: 2px; }
-@media (max-width: 1100px) { .calc-pick-4 { grid-template-columns: 1fr 1fr; } .calc-pick-row { grid-template-columns: 1fr; } .calc-pick-1 { grid-template-columns: 1fr 1fr; height: auto; } }
+@media (max-width: 1100px) { .calc-pick-row { grid-template-columns: 1fr; } }
 @media (max-width: 940px) { .calc-pick-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .calc-pick-2 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .calc-pick { gap: 10px; } .calc-pick button { padding: 16px 16px; } .calc-pick .t { font-size: 11.5px; letter-spacing: .14em; } .calc-pick .d { font-size: 13px; } }
 .calc-select { width: 100%; appearance: none; -webkit-appearance: none; cursor: pointer; border: 1px solid rgba(242,237,225,.25); border-radius: 0; background: rgba(242,237,225,.05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23c4a56b' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 14px center; color: #f2ede1; font-size: 15.5px; padding: 12px 38px 12px 14px; }
 .calc-select option { color: #062e44; background: #f2ede1; }
